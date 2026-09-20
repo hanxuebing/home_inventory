@@ -1,0 +1,52 @@
+{
+  // Terminal → Run Task 调用；说明见 docs/开发调试指南.md §3.3
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "server: build",
+      "type": "shell",
+      "command": "go build ./...",
+      "options": { "cwd": "${workspaceFolder}/server" },
+      "group": "build",
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "server: vet",
+      "type": "shell",
+      "command": "go vet ./...",
+      "options": { "cwd": "${workspaceFolder}/server" },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "server: run",
+      "type": "shell",
+      "command": "go run ./cmd/api",
+      "options": { "cwd": "${workspaceFolder}/server" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "web: dev server",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "web: build",
+      "type": "shell",
+      "command": "npm run build",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "hashpw: 生成密码哈希",
+      "type": "shell",
+      "command": "go run ./cmd/hashpw",
+      "options": { "cwd": "${workspaceFolder}/server" },
+      "problemMatcher": []
+    }
+  ]
+}

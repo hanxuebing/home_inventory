@@ -1,0 +1,19 @@
+# Go
+server/api
+server/api.exe
+server/*.exe
+
+# 运行时产物
+server/.env
+server/uploads/
+
+# Node / Vue
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+
+# 系统杂物
+Thumbs.db
+.DS_Store

@@ -1,0 +1,71 @@
+/* 全局样式：移动端优先 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #f5f7fa;
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  min-height: 100dvh;
+}
+
+/* 触控目标统一不小于 44px */
+.el-button {
+  min-height: 36px;
+}
+
+/* 卡片通用：去掉 EP 默认大圆角阴影的违和感，紧凑化 */
+.el-card {
+  --el-card-padding: 12px;
+  border-radius: 10px;
+}
+
+/* 对话框在窄屏尽量占满 */
+@media (max-width: 480px) {
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    margin: 8px auto !important;
+  }
+
+  .el-message-box {
+    width: calc(100vw - 32px) !important;
+  }
+}
+
+/* 分页器紧凑 */
+.el-pagination {
+  margin-top: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* 列表加载态与空态 */
+.page-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+.empty-tip {
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
+  padding: 40px 0;
+}
+
+/* 通用节标题 */
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin: 16px 0 8px;
+}

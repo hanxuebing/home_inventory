@@ -1,0 +1,16 @@
+{
+  // Go：保存即格式化 + 静态检查
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  },
+  "go.lintTool": "staticcheck",
+  "go.lintOnSave": "workspace",
+  // Vue / TS：Volar 接管
+  "[vue]": { "editor.defaultFormatter": "Vue.volar" },
+  "[typescript]": { "editor.defaultFormatter": "Vue.volar" },
+  "typescript.tsdk": "node_modules/typescript/lib",
+  // 每个项目独立终端，方便后端/前端两个 dev server 并存
+  "terminal.integrated.cwd": "${workspaceFolder}"
+}
