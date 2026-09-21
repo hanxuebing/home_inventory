@@ -23,12 +23,12 @@ const dynamicRoutes: RouteRecordRaw[] = [
     component: () => import('@/layouts/MainLayout.vue'),
     redirect: '/items',
     children: [
-      { path: 'items', name: 'items', component: () => import('@/views/items/ItemListView.vue'), meta: { permission: 'biz:item:page', tab: 'items', title: '家庭物品' } },
+      { path: 'items', name: 'items', component: () => import('@/views/items/ItemListView.vue'), meta: { permission: 'biz:item:page', tab: 'items', keepAlive: true, title: '家庭物品' } },
       { path: 'items/new', name: 'item-new', component: () => import('@/views/items/ItemEditView.vue'), meta: { permission: 'biz:item:create', title: '录入物品' } },
       { path: 'items/:id', name: 'item-detail', component: () => import('@/views/items/ItemDetailView.vue'), meta: { permission: 'biz:item:list', title: '物品详情' } },
       { path: 'items/:id/edit', name: 'item-edit', component: () => import('@/views/items/ItemEditView.vue'), meta: { permission: 'biz:item:update', title: '编辑物品' } },
-      { path: 'categories', name: 'categories', component: () => import('@/views/categories/CategoryListView.vue'), meta: { permission: 'biz:category:page', tab: 'categories', title: '分类管理' } },
-      { path: 'profile', name: 'profile', component: () => import('@/views/profile/ProfileView.vue'), meta: { tab: 'profile', title: '我的' } },
+      { path: 'categories', name: 'categories', component: () => import('@/views/categories/CategoryListView.vue'), meta: { permission: 'biz:category:page', tab: 'categories', keepAlive: true, title: '分类管理' } },
+      { path: 'profile', name: 'profile', component: () => import('@/views/profile/ProfileView.vue'), meta: { tab: 'profile', keepAlive: true, title: '我的' } },
 
       // ---- 管理功能：按权限动态出现（family_admin 可见成员管理；admin 全见）----
       // tab: 'profile' —— 都是从"我的"页进入的，底部 tabbar 高亮"我的"

@@ -29,15 +29,20 @@ function go(to: string) {
     </header>
 
     <!-- 内容区：max-width 480px 居中，底部留出 tabbar 高度 -->
-    <!-- KeepAlive 缓存三个 tab 页：切换 tab 保留状态（列表页保留搜索/筛选/滚动，
-         分类页在 onActivated 刷新数据）。编辑/详情带 :id 参数不缓存（会串数据），
-         管理页数据时效性要求高也不缓存 -->
+    <!-- 缓存策略（vue-router 官方推荐模式）：meta.keepAlive 的路由进 KeepAlive，
+         其余（编辑/详情带 :id、管理页）走非缓存分支。
+         不用 KeepAlive include —— 按组件名匹配在懒加载路由下不可靠 -->
     <main class="layout-main">
       <div class="layout-container">
-        <router-view v-slot="{ Component }">
-          <KeepAlive :include="['ItemListView', 'CategoryListView', 'ProfileView']">
-            <component :is="Component" />
+        <router-view v-slot="{ Component, route }">
+          <!-- 注意：注释不能写在 KeepAlive 里面 —— 注释也是子节点，
+               会触发 "expects exactly one child component" 编译错误。
+               key 用路由名：tab 页各占一个稳定缓存实例 -->
+          <KeepAlive>
+            <component :is="Component" v-if="route.meta.keepAlive" :key="route.name" />
           </KeepAlive>
+          <!-- 非缓存页 key 用完整 path：详情 /items/3 → /items/5 是两个实例，数据各自加载 -->
+          <component :is="Component" v-if="!route.meta.keepAlive" :key="route.path" />
         </router-view>
       </div>
     </main>
