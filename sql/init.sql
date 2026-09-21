@@ -8,6 +8,12 @@
 -- 密码哈希：Argon2id (m=19456, t=2, p=1) PHC 格式；占位符由 server/cmd/hashpw 生成后替换
 -- ============================================================
 
+-- 必须放在所有中文数据之前：官方镜像 entrypoint 执行本文件时 mysql 客户端
+-- 未指定字符集，auto 模式按容器 locale（C/POSIX）回退 latin1 ——
+-- UTF-8 字节被按 latin1 解读再转 utf8mb4 存储，中文即双重编码乱码
+-- （实测：张三 → C3A5C2BCC2A0...）。SET NAMES 显式声明本文件是 UTF-8。
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS home_items
   DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 USE home_items;
