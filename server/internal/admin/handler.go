@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -99,15 +100,26 @@ func (h *Handler) UpdateFamily(c *gin.Context) {
 	resp.OK(c, nil)
 }
 
+type deleteFamilyReq struct {
+	ConfirmName string `json:"confirmName"` // 必须与家庭名一致（危险操作的二次确认）
+}
+
 // DeleteFamily DELETE /api/v1/admin/families/:id —— 权限码 sys:family:delete
+// 级联软删：家庭 + 全部成员 + 全部物品（confirmName 必须与家庭名一致）。
 func (h *Handler) DeleteFamily(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err := h.svc.DeleteFamily(id); err != nil {
+	var req deleteFamilyReq
+	_ = c.ShouldBindJSON(&req) // DELETE body 可选；缺 confirmName 时 service 会拒绝
+
+	a := h.svc.actorOf(uid(c))
+	members, items, err := h.svc.DeleteFamily(a, id, req.ConfirmName)
+	if err != nil {
 		badResp(c, err)
 		return
 	}
-	h.audit(c, "FAMILY_DELETE", c.Param("id"), "删除家庭（软删）")
-	resp.OK(c, nil)
+	h.audit(c, "FAMILY_DELETE", c.Param("id"),
+		fmt.Sprintf("删除家庭（级联软删成员 %d 人、物品 %d 件）", members, items))
+	resp.OK(c, gin.H{"members": members, "items": items})
 }
 
 type transferReq struct {
@@ -273,11 +285,13 @@ func (h *Handler) SetUserRole(c *gin.Context) {
 }
 
 type deleteUserReq struct {
-	ReceiverID *uint64 `json:"receiverId"` // 名下有物品时必填
+	ReceiverID  *uint64 `json:"receiverId"`  // 可选：名下物品的接收人（同家庭成员）
+	ConfirmName string  `json:"confirmName"` // 必须与被删用户昵称一致（危险操作的二次确认）
 }
 
 // DeleteUser DELETE /api/v1/admin/users/:id —— 权限码 sys:user:delete
-// 名下有物品时 body 必须带 receiverId（同家庭成员），物品责任整体移交并写 TRANSFER 历史。
+// 名下有物品时二选一：带 receiverId（同家庭成员）则物品责任整体移交并写 TRANSFER 历史；
+// 不带则物品随成员一并软删（写 DELETE 历史）。confirmName 必须与被删用户昵称一致。
 func (h *Handler) DeleteUser(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	if id == 0 {
@@ -285,16 +299,17 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		return
 	}
 	var req deleteUserReq
-	_ = c.ShouldBindJSON(&req) // DELETE body 可选
+	_ = c.ShouldBindJSON(&req) // DELETE body 可选；缺 confirmName 时 service 会拒绝
 
 	a := h.svc.actorOf(uid(c))
-	n, err := h.svc.DeleteUser(a, id, req.ReceiverID)
+	transferred, purged, err := h.svc.DeleteUser(a, id, req.ReceiverID, req.ConfirmName)
 	if err != nil {
 		badResp(c, err)
 		return
 	}
-	h.audit(c, "USER_DELETE", c.Param("id"), "删除用户（软删），物品责任移交 "+strconv.FormatInt(n, 10)+" 条")
-	resp.OK(c, gin.H{"transferred": n})
+	h.audit(c, "USER_DELETE", c.Param("id"),
+		fmt.Sprintf("删除用户（软删），物品移交 %d 条、随删 %d 条", transferred, purged))
+	resp.OK(c, gin.H{"transferred": transferred, "purged": purged})
 }
 
 // ============================ 审计 ============================

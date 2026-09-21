@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 成员管理：家庭管理员视角（admin 亦可从用户管理跳入指定家庭）。
-// 功能：成员列表（角色徽章）、添加成员、编辑、删除（名下物品须选接收人）、移交家庭管理员
+// 功能：成员列表（角色徽章）、添加成员、编辑、删除（接收人可选，输入昵称确认）、移交家庭管理员
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -38,11 +38,12 @@ const createDialog = reactive({
 // ---- 编辑成员 ----
 const editDialog = reactive({ visible: false, id: 0, nickname: '', email: '', status: 1, saving: false })
 
-// ---- 删除成员（含接收人） ----
+// ---- 删除成员（接收人可选 + 输入昵称确认） ----
 const delDialog = reactive({
   visible: false,
   member: null as FamilyMember | null,
   receiverId: null as number | null,
+  confirmName: '',
   saving: false,
 })
 
@@ -113,24 +114,28 @@ async function saveEdit() {
 }
 
 function openDelete(m: FamilyMember) {
-  Object.assign(delDialog, { visible: true, member: m, receiverId: null })
+  Object.assign(delDialog, { visible: true, member: m, receiverId: null, confirmName: '' })
 }
 
 async function confirmDelete() {
   const m = delDialog.member!
-  if (receiverOptions.value.length > 0 && !delDialog.receiverId) {
-    ElMessage.warning('该成员可能名下有物品，请选择接收人')
-    return
-  }
   delDialog.saving = true
   try {
-    const { transferred } = await deleteUser(m.id, delDialog.receiverId)
+    const { transferred, purged } = await deleteUser(m.id, {
+      receiverId: delDialog.receiverId,
+      confirmName: delDialog.confirmName.trim(),
+    })
     ElMessage.success(
-      transferred > 0 ? `已删除，${transferred} 件物品的责任已移交` : '已删除',
+      transferred > 0
+        ? `已删除，${transferred} 件物品的责任已移交`
+        : purged > 0
+          ? `已删除，名下 ${purged} 件物品一并删除`
+          : '已删除',
     )
     delDialog.visible = false
     load()
   } catch {
+    // 确认昵称不匹配等提示由拦截器弹出
   } finally {
     delDialog.saving = false
   }
@@ -266,25 +271,38 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <!-- 删除成员：名下物品责任移交 -->
+    <!-- 删除成员：接收人可选 + 输入昵称确认 -->
     <el-dialog v-model="delDialog.visible" :title="`删除成员：${delDialog.member?.nickname ?? ''}`" width="340px">
       <el-alert
-        type="warning"
+        type="error"
         :closable="false"
         show-icon
-        :title="`该成员名下负责的物品将移交给接收人，接收人可像原提交者一样继续管理；历史记录全部保留。`"
+        :title="receiverOptions.length
+          ? '选择接收人则名下物品责任移交（历史保留）；不选则名下物品随成员一并删除。'
+          : '该成员名下的物品将随删除一并清除。'"
         style="margin-bottom: 12px"
       />
-      <el-form label-position="top">
-        <el-form-item label="物品接收人（同家庭成员）" :required="receiverOptions.length > 0">
-          <el-select v-model="delDialog.receiverId" placeholder="选择接收人" clearable style="width: 100%">
+      <el-form label-position="top" v-if="receiverOptions.length">
+        <el-form-item label="物品接收人（可选）">
+          <el-select v-model="delDialog.receiverId" placeholder="不选则物品一并删除" clearable style="width: 100%">
             <el-option v-for="r in receiverOptions" :key="r.id" :label="r.nickname" :value="r.id" />
           </el-select>
         </el-form-item>
       </el-form>
+      <el-input
+        v-model="delDialog.confirmName"
+        :placeholder="`输入昵称「${delDialog.member?.nickname}」确认`"
+      />
       <template #footer>
         <el-button @click="delDialog.visible = false">取消</el-button>
-        <el-button type="danger" :loading="delDialog.saving" @click="confirmDelete">确认删除</el-button>
+        <el-button
+          type="danger"
+          :loading="delDialog.saving"
+          :disabled="delDialog.confirmName.trim() !== delDialog.member?.nickname"
+          @click="confirmDelete"
+        >
+          确认删除
+        </el-button>
       </template>
     </el-dialog>
 

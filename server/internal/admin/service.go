@@ -19,7 +19,7 @@ import (
 
 // ---- 业务错误（handler 映射为 400/403 与友好文案）----
 var (
-	errFamilyNotEmpty     = errors.New("家庭内还有成员，请先处理成员后再删除家庭")
+	errConfirmMismatch    = errors.New("确认失败：输入的名称与目标不一致")
 	errTargetNotMember    = errors.New("目标用户不是该家庭的在职成员")
 	errTargetIsAdmin      = errors.New("不能对超管做移交操作")
 	errTargetAlreadyAdmin = errors.New("目标用户已经是家庭管理员")
@@ -31,7 +31,6 @@ var (
 	errDeleteAdmin        = errors.New("不能删除超级管理员")
 	errFamilyHasAdmin     = errors.New("该家庭已有家庭管理员，如需更换请使用移交功能")
 	errNotFound           = errors.New("目标不存在")
-	errNeedReceiver       = errors.New("该用户名下有物品，必须指定接收人")
 	errBadReceiver        = errors.New("接收人必须是同家庭的在职成员，且不能是被删用户本人")
 )
 
@@ -175,15 +174,89 @@ func (s *Service) UpdateFamily(id uint64, name, remark string) error {
 	return err
 }
 
-// DeleteFamily 软删除家庭（仍有成员时拒绝，先处理成员再删）。
-func (s *Service) DeleteFamily(id uint64) error {
-	var members int
-	s.db.QueryRow(`SELECT COUNT(*) FROM sys_user WHERE family_id = ? AND deleted = 0`, id).Scan(&members)
-	if members > 0 {
-		return errFamilyNotEmpty
+// DeleteFamily 删除家庭（级联软删）：家庭下全部物品、全部成员一起删除。
+//
+// 破坏面大，调用方必须先通过 confirmName 校验（前端弹窗输入家庭名，
+// 后端比对成功才执行——前端 disabled 只是体验，这里是强制关卡）。
+// 物品 DELETE 历史的 operator 记真实执行人 a；例外：挂靠该家庭的
+// 超管账号不删，仅将 family_id 置空。
+func (s *Service) DeleteFamily(a *actor, id uint64, confirmName string) (members, items int64, err error) {
+	var name string
+	if e := s.db.QueryRow(`SELECT name FROM sys_family WHERE id = ? AND deleted = 0`, id).Scan(&name); e != nil {
+		return 0, 0, errNotFound
 	}
-	_, err := s.db.Exec(`UPDATE sys_family SET deleted = 1 WHERE id = ?`, id)
-	return err
+	if strings.TrimSpace(confirmName) != name {
+		return 0, 0, errConfirmMismatch
+	}
+
+	// 该家庭成员逐个处理（家庭量级小，循环足够清晰）：
+	// 超管仅解除挂靠，其余软删 + 清角色 + 撤会话 + 逐出权限缓存
+	var memberIDs []uint64
+	rows, e := s.db.Query(`SELECT id FROM sys_user WHERE family_id = ? AND deleted = 0`, id)
+	if e != nil {
+		return 0, 0, e
+	}
+	for rows.Next() {
+		var uid uint64
+		if rows.Scan(&uid) == nil {
+			memberIDs = append(memberIDs, uid)
+		}
+	}
+	rows.Close()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+
+	for _, uid := range memberIDs {
+		if s.hasRole(uid, "admin") {
+			if _, err = tx.Exec(`UPDATE sys_user SET family_id = NULL WHERE id = ?`, uid); err != nil {
+				return 0, 0, err
+			}
+			continue
+		}
+		if _, err = tx.Exec(`UPDATE sys_user SET deleted = 1, status = 0 WHERE id = ?`, uid); err != nil {
+			return 0, 0, err
+		}
+		if _, err = tx.Exec(`DELETE FROM sys_user_role WHERE user_id = ?`, uid); err != nil {
+			return 0, 0, err
+		}
+		members++
+	}
+
+	// 先给未删物品写 DELETE 历史（含快照），再软删——顺序不能反：
+	// 软删后再 SELECT deleted=0 就查不到这批物品了
+	if _, err = tx.Exec(`
+		INSERT INTO biz_item_history (item_id, operator_id, operator_name, action, before_json)
+		SELECT id, ?, ?, 'DELETE',
+		       JSON_OBJECT('name', name, 'quantity', quantity, 'image', image, 'remark', remark)
+		FROM biz_item WHERE family_id = ? AND deleted = 0`,
+		a.id, operatorName(s, a.id), id); err != nil {
+		return 0, 0, err
+	}
+	res, err := tx.Exec(`UPDATE biz_item SET deleted = 1 WHERE family_id = ? AND deleted = 0`, id)
+	if err != nil {
+		return 0, 0, err
+	}
+	items, _ = res.RowsAffected()
+
+	if _, err = tx.Exec(`UPDATE sys_family SET deleted = 1 WHERE id = ?`, id); err != nil {
+		return 0, 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+
+	// 会话撤销 / 缓存逐出放在事务提交后：失败也不回滚数据，属于尽力而为的收尾
+	for _, uid := range memberIDs {
+		if !s.hasRole(uid, "admin") {
+			s.auth.RevokeUserTokens(uid)
+			s.auth.EvictPermCache(uid)
+		}
+	}
+	return members, items, nil
 }
 
 // TransferAdmin 移交家庭管理员：target 成为 family_admin，原管理员降为 member。
@@ -423,27 +496,34 @@ func (s *Service) SetUserRole(a *actor, targetID uint64, roleCode string, family
 	return s.setUserRole(targetID, roleCode)
 }
 
-// DeleteUser 删除用户（软删）—— 关键动作：名下物品的"责任转移"。
+// DeleteUser 删除用户（软删）—— 名下物品的二选一处理：
 //
-//	被删用户 owner 的物品全部转给 receiver（接收人，须同家庭），
-//	接收人此后对这些物品拥有与原提交者相同的增删改查权；
-//	每条转移写 TRANSFER 历史，物品历史完整保留。
-func (s *Service) DeleteUser(a *actor, targetID uint64, receiverID *uint64) (transferred int64, err error) {
+//	指定 receiverId：物品责任整体移交给接收人（须同家庭），
+//	                每条写 TRANSFER 历史，物品历史完整保留；
+//	不指定 receiver：名下物品一并软删，每条写 DELETE 历史（快照保留）。
+//
+// 破坏面大，confirmName 必须与被删用户昵称一致（前端弹窗输入昵称，后端强制比对）。
+func (s *Service) DeleteUser(a *actor, targetID uint64, receiverID *uint64, confirmName string) (transferred, purged int64, err error) {
 	if targetID == a.id {
-		return 0, errDeleteSelf
+		return 0, 0, errDeleteSelf
 	}
 	if !s.canTouchUser(a, targetID) {
-		return 0, errOutOfScope
+		return 0, 0, errOutOfScope
 	}
 	if s.hasRole(targetID, "admin") {
-		return 0, errDeleteAdmin
+		return 0, 0, errDeleteAdmin
 	}
 
 	var tfam sql.NullInt64
 	var tdeleted int8
-	s.db.QueryRow(`SELECT family_id, deleted FROM sys_user WHERE id = ?`, targetID).Scan(&tfam, &tdeleted)
+	var tnickname string
+	s.db.QueryRow(`SELECT family_id, deleted, nickname FROM sys_user WHERE id = ?`, targetID).
+		Scan(&tfam, &tdeleted, &tnickname)
 	if tdeleted == 1 {
-		return 0, errNotFound
+		return 0, 0, errNotFound
+	}
+	if strings.TrimSpace(confirmName) != tnickname {
+		return 0, 0, errConfirmMismatch
 	}
 
 	// 统计名下作为 owner 的未删物品
@@ -452,54 +532,76 @@ func (s *Service) DeleteUser(a *actor, targetID uint64, receiverID *uint64) (tra
 
 	if own > 0 {
 		if receiverID == nil {
-			return 0, errNeedReceiver
-		}
-		// 接收人必须存在、在职、同家庭、且不是被删人自己
-		var rfam sql.NullInt64
-		var rstatus int8
-		var rdeleted int8
-		e := s.db.QueryRow(`SELECT family_id, status, deleted FROM sys_user WHERE id = ?`, *receiverID).
-			Scan(&rfam, &rstatus, &rdeleted)
-		if e != nil || rdeleted == 1 || rstatus != 1 || !rfam.Valid || rfam != tfam || *receiverID == targetID {
-			return 0, errBadReceiver
-		}
+			// 不指定接收人：物品随成员一并软删
+			tx, err := s.db.Begin()
+			if err != nil {
+				return 0, 0, err
+			}
+			defer tx.Rollback()
+			// 先写 DELETE 历史（快照），再软删——顺序与 DeleteFamily 相同
+			if _, err = tx.Exec(`
+				INSERT INTO biz_item_history (item_id, operator_id, operator_name, action, before_json)
+				SELECT id, ?, ?, 'DELETE',
+				       JSON_OBJECT('name', name, 'quantity', quantity, 'image', image, 'remark', remark)
+				FROM biz_item WHERE owner_id = ? AND deleted = 0`,
+				a.id, operatorName(s, a.id), targetID); err != nil {
+				return 0, 0, err
+			}
+			if _, err = tx.Exec(`UPDATE biz_item SET deleted = 1 WHERE owner_id = ? AND deleted = 0`, targetID); err != nil {
+				return 0, 0, err
+			}
+			if err = tx.Commit(); err != nil {
+				return 0, 0, err
+			}
+			purged = own
+		} else {
+			// 接收人必须存在、在职、同家庭、且不是被删人自己
+			var rfam sql.NullInt64
+			var rstatus int8
+			var rdeleted int8
+			e := s.db.QueryRow(`SELECT family_id, status, deleted FROM sys_user WHERE id = ?`, *receiverID).
+				Scan(&rfam, &rstatus, &rdeleted)
+			if e != nil || rdeleted == 1 || rstatus != 1 || !rfam.Valid || rfam != tfam || *receiverID == targetID {
+				return 0, 0, errBadReceiver
+			}
 
-		tx, err := s.db.Begin()
-		if err != nil {
-			return 0, err
-		}
-		defer tx.Rollback()
+			tx, err := s.db.Begin()
+			if err != nil {
+				return 0, 0, err
+			}
+			defer tx.Rollback()
 
-		if _, err := tx.Exec(`UPDATE biz_item SET owner_id = ? WHERE owner_id = ? AND deleted = 0`,
-			*receiverID, targetID); err != nil {
-			return 0, err
+			if _, err = tx.Exec(`UPDATE biz_item SET owner_id = ? WHERE owner_id = ? AND deleted = 0`,
+				*receiverID, targetID); err != nil {
+				return 0, 0, err
+			}
+			// 每条转移写 TRANSFER 历史（before/after 记责任人变化）
+			var receiverName, targetName string
+			tx.QueryRow(`SELECT nickname FROM sys_user WHERE id = ?`, *receiverID).Scan(&receiverName)
+			tx.QueryRow(`SELECT nickname FROM sys_user WHERE id = ?`, targetID).Scan(&targetName)
+			before, _ := json.Marshal(map[string]any{"owner": targetName})
+			after, _ := json.Marshal(map[string]any{"owner": receiverName})
+			if _, err = tx.Exec(`
+				INSERT INTO biz_item_history (item_id, operator_id, operator_name, action, before_json, after_json)
+				SELECT id, ?, ?, 'TRANSFER', ?, ? FROM biz_item WHERE owner_id = ? AND deleted = 0`,
+				a.id, operatorName(s, a.id), before, after, *receiverID); err != nil {
+				return 0, 0, err
+			}
+			if err = tx.Commit(); err != nil {
+				return 0, 0, err
+			}
+			transferred = own
 		}
-		// 每条转移写 TRANSFER 历史（before/after 记责任人变化）
-		var receiverName, targetName string
-		tx.QueryRow(`SELECT nickname FROM sys_user WHERE id = ?`, *receiverID).Scan(&receiverName)
-		tx.QueryRow(`SELECT nickname FROM sys_user WHERE id = ?`, targetID).Scan(&targetName)
-		before, _ := json.Marshal(map[string]any{"owner": targetName})
-		after, _ := json.Marshal(map[string]any{"owner": receiverName})
-		if _, err := tx.Exec(`
-			INSERT INTO biz_item_history (item_id, operator_id, operator_name, action, before_json, after_json)
-			SELECT id, ?, ?, 'TRANSFER', ?, ? FROM biz_item WHERE owner_id = ? AND deleted = 0`,
-			a.id, operatorName(s, a.id), before, after, *receiverID); err != nil {
-			return 0, err
-		}
-		if err := tx.Commit(); err != nil {
-			return 0, err
-		}
-		transferred = own
 	}
 
 	// 软删 + 清角色 + 撤会话 + 逐出缓存
 	if _, err := s.db.Exec(`UPDATE sys_user SET deleted = 1, status = 0 WHERE id = ?`, targetID); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	s.db.Exec(`DELETE FROM sys_user_role WHERE user_id = ?`, targetID)
 	s.auth.RevokeUserTokens(targetID)
 	s.auth.EvictPermCache(targetID)
-	return transferred, nil
+	return transferred, purged, nil
 }
 
 // canTouchUser 管理权判定：admin 可动所有人（admin 除外，调用方自查）；

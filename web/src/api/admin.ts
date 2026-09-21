@@ -15,8 +15,12 @@ export function updateFamily(id: number | string, name: string, remark = ''): Pr
   return http.put(`/admin/families/${id}`, { name, remark }).then(() => undefined)
 }
 
-export function deleteFamily(id: number | string): Promise<void> {
-  return http.delete(`/admin/families/${id}`).then(() => undefined)
+/** 删除家庭（级联软删全部成员与物品）；confirmName 必须与家庭名一致，返回级联统计 */
+export function deleteFamily(id: number | string, confirmName: string): Promise<{ members: number; items: number }> {
+  return http.delete(`/admin/families/${id}`, { data: { confirmName } }) as Promise<{
+    members: number
+    items: number
+  }>
 }
 
 export function familyMembers(familyId: number | string): Promise<FamilyMember[]> {
@@ -65,10 +69,17 @@ export function setUserRole(id: number | string, roleCode: string, familyId?: nu
   return http.put(`/admin/users/${id}/role`, { roleCode, familyId }).then(() => undefined)
 }
 
-/** 删除用户；名下有物品时必须带 receiverId（同家庭接收人），返回移交条数 */
-export function deleteUser(id: number | string, receiverId?: number | null): Promise<{ transferred: number }> {
-  return http.delete(`/admin/users/${id}`, { data: receiverId ? { receiverId } : {} }) as Promise<{
+/**
+ * 删除用户；confirmName 必须与被删用户昵称一致（后端强制校验）。
+ * 名下有物品时二选一：带 receiverId 则移交（transferred），不带则随成员删除（purged）。
+ */
+export function deleteUser(
+  id: number | string,
+  opts: { receiverId?: number | null; confirmName: string },
+): Promise<{ transferred: number; purged: number }> {
+  return http.delete(`/admin/users/${id}`, { data: opts }) as Promise<{
     transferred: number
+    purged: number
   }>
 }
 
