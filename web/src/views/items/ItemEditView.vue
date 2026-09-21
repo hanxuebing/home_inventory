@@ -10,6 +10,7 @@ import { getItem, createItem, updateItem, uploadImage } from '@/api/item'
 import { listCategories, createCategory } from '@/api/category'
 import { listFamilies, familyMembers } from '@/api/admin'
 import { useUserStore } from '@/stores/user'
+import { markItemsDirty } from '@/utils/itemSync'
 import type { Category, Family, FamilyMember } from '@/types'
 
 const route = useRoute()
@@ -174,6 +175,7 @@ async function submit() {
       await createItem(payload)
       ElMessage.success('已录入')
     }
+    markItemsDirty() // 列表页返回时按脏标刷新（保留筛选/分页/滚动）
     router.back()
   } catch {
     // 错误提示由拦截器弹出

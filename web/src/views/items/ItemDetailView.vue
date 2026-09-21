@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getItem, getItemHistory, deleteItem } from '@/api/item'
+import { markItemsDirty } from '@/utils/itemSync'
 import { useUserStore } from '@/stores/user'
 import { fmtTime, actionText } from '@/utils/format'
 import type { Item, ItemHistory } from '@/types'
@@ -45,6 +46,7 @@ async function onRemove() {
     confirmButtonClass: 'el-button--danger',
   })
   await deleteItem(it.id)
+  markItemsDirty() // 列表页返回时刷新（保留筛选/分页/滚动）
   ElMessage.success('已删除')
   router.replace('/items')
 }
