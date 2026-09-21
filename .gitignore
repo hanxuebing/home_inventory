@@ -3,9 +3,11 @@ server/api
 server/api.exe
 server/*.exe
 
-# 运行时产物
+# 运行时产物 / 凭据
 server/.env
 server/uploads/
+/.env
+/data/
 
 # Node / Vue
 web/node_modules/
