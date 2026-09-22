@@ -284,6 +284,32 @@ func (h *Handler) SetUserRole(c *gin.Context) {
 	resp.OK(c, nil)
 }
 
+type resetPasswordReq struct {
+	NewPassword string `json:"newPassword" binding:"required,min=10"`
+}
+
+// ResetPassword PUT /api/v1/admin/users/:id/password —— 权限码 sys:user:update
+// 管理端重置密码；重置后该用户全部会话被撤销（含重置自己 —— 当前会话一并失效）。
+func (h *Handler) ResetPassword(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	if id == 0 {
+		resp.BadRequest(c, "id 不合法")
+		return
+	}
+	var req resetPasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.BadRequest(c, "新密码至少 10 位")
+		return
+	}
+	a := h.svc.actorOf(uid(c))
+	if err := h.svc.ResetPassword(a, id, req.NewPassword); err != nil {
+		badResp(c, err)
+		return
+	}
+	h.audit(c, "USER_RESET_PWD", c.Param("id"), "重置用户密码")
+	resp.OK(c, nil)
+}
+
 type deleteUserReq struct {
 	ReceiverID  *uint64 `json:"receiverId"`  // 可选：名下物品的接收人（同家庭成员）
 	ConfirmName string  `json:"confirmName"` // 必须与被删用户昵称一致（危险操作的二次确认）
@@ -347,6 +373,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup, jwtAuth gin.HandlerFunc) {
 	g.POST("/users", middleware.RequirePermission("sys:user:create"), h.CreateUser)
 	g.PUT("/users/:id", middleware.RequirePermission("sys:user:update"), h.UpdateUser)
 	g.PUT("/users/:id/role", middleware.RequirePermission("sys:user:update"), h.SetUserRole)
+	g.PUT("/users/:id/password", middleware.RequirePermission("sys:user:update"), h.ResetPassword)
 	g.DELETE("/users/:id", middleware.RequirePermission("sys:user:delete"), h.DeleteUser)
 
 	// 审计

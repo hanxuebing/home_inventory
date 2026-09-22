@@ -70,6 +70,14 @@ export function setUserRole(id: number | string, roleCode: string, familyId?: nu
 }
 
 /**
+ * 管理端重置密码（admin 任意用户 / family_admin 仅本家庭成员）。
+ * 重置后该用户全部登录会话被撤销，需用新密码重新登录。
+ */
+export function resetUserPassword(id: number | string, newPassword: string): Promise<void> {
+  return http.put(`/admin/users/${id}/password`, { newPassword }).then(() => undefined)
+}
+
+/**
  * 删除用户；confirmName 必须与被删用户昵称一致（后端强制校验）。
  * 名下有物品时二选一：带 receiverId 则移交（transferred），不带则随成员删除（purged）。
  */

@@ -458,6 +458,28 @@ func (s *Service) UpdateUser(a *actor, targetID uint64, nickname, email string, 
 	return nil
 }
 
+// ResetPassword 管理端重置密码：成员忘记密码时的兜底入口（自助修改需旧密码，
+// 忘了就死锁，所以管理端必须能重置）。范围同 UpdateUser（admin 任意 / family_admin 本家庭），
+// 重置后撤销该用户全部会话 —— 与角色变更/禁用同一安全策略：旧会话不知晓密码已变。
+func (s *Service) ResetPassword(a *actor, targetID uint64, newPassword string) error {
+	if !s.canTouchUser(a, targetID) {
+		return errOutOfScope
+	}
+	hash, err := argon2id.Hash(newPassword)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE sys_user SET password_hash = ? WHERE id = ? AND deleted = 0`, hash, targetID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errNotFound
+	}
+	s.auth.RevokeUserTokens(targetID)
+	return nil
+}
+
 // SetUserRole 修改角色（仅 admin）。
 func (s *Service) SetUserRole(a *actor, targetID uint64, roleCode string, familyID *uint64) error {
 	if !a.isAdmin {

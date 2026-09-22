@@ -4,7 +4,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { familyMembers, transferFamilyAdmin, createUser, updateUser, deleteUser } from '@/api/admin'
+import { familyMembers, transferFamilyAdmin, createUser, updateUser, deleteUser, resetUserPassword } from '@/api/admin'
 import { useUserStore } from '@/stores/user'
 import { roleBadge } from '@/utils/format'
 import type { FamilyMember } from '@/types'
@@ -49,6 +49,9 @@ const delDialog = reactive({
 
 // ---- 移交家庭管理员 ----
 const transferDialog = reactive({ visible: false, target: null as FamilyMember | null, saving: false })
+
+// ---- 重置密码（成员忘记密码时管理端兜底；重置后其全部会话被撤销） ----
+const resetDialog = reactive({ visible: false, member: null as FamilyMember | null, password: '', saving: false })
 
 /** 删除对话框里的接收人候选：同家庭其他人 */
 const receiverOptions = computed(() =>
@@ -141,6 +144,27 @@ async function confirmDelete() {
   }
 }
 
+function openReset(m: FamilyMember) {
+  Object.assign(resetDialog, { visible: true, member: m, password: '' })
+}
+
+async function confirmReset() {
+  if (resetDialog.password.length < 10) {
+    ElMessage.warning('新密码至少 10 位')
+    return
+  }
+  resetDialog.saving = true
+  try {
+    await resetUserPassword(resetDialog.member!.id, resetDialog.password)
+    ElMessage.success(`已重置 ${resetDialog.member!.nickname} 的密码，请告知其用新密码重新登录`)
+    resetDialog.visible = false
+  } catch {
+    // 提示由拦截器弹出
+  } finally {
+    resetDialog.saving = false
+  }
+}
+
 function openTransfer(m: FamilyMember) {
   Object.assign(transferDialog, { visible: true, target: m })
 }
@@ -197,6 +221,14 @@ onMounted(load)
           </div>
           <div class="mb-ops">
             <el-button text type="primary" size="small" @click="openEdit(m)">编辑</el-button>
+            <el-button
+              v-if="!m.roles.includes('admin')"
+              text
+              size="small"
+              @click="openReset(m)"
+            >
+              重置密码
+            </el-button>
             <el-button
               v-if="isAdmin"
               text
@@ -303,6 +335,20 @@ onMounted(load)
         >
           确认删除
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 重置密码 -->
+    <el-dialog v-model="resetDialog.visible" :title="`重置密码：${resetDialog.member?.nickname ?? ''}`" width="340px">
+      <el-form label-position="top" @submit.prevent="confirmReset">
+        <el-form-item label="新密码" required>
+          <el-input v-model="resetDialog.password" type="password" show-password placeholder=">=10 位" />
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon title="重置后该成员的所有登录会话将被注销，需用新密码重新登录" />
+      <template #footer>
+        <el-button @click="resetDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="resetDialog.saving" @click="confirmReset">确认重置</el-button>
       </template>
     </el-dialog>
 

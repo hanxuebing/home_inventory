@@ -5,7 +5,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import {
-  listUsers, createUser, updateUser, setUserRole, deleteUser, listFamilies, familyMembers,
+  listUsers, createUser, updateUser, setUserRole, deleteUser, listFamilies, familyMembers, resetUserPassword,
 } from '@/api/admin'
 import { roleBadge, fmtTime } from '@/utils/format'
 import type { Family, UserRow } from '@/types'
@@ -34,6 +34,9 @@ const delDialog = reactive({
   visible: false, row: null as UserRow | null, receiverId: null as number | null,
   confirmName: '', saving: false, receiverOptions: [] as { id: number; nickname: string }[],
 })
+
+// ---- 重置密码（忘记密码时的管理端兜底） ----
+const resetDialog = reactive({ visible: false, row: null as UserRow | null, password: '', saving: false })
 
 async function load() {
   loading.value = true
@@ -170,6 +173,26 @@ async function confirmDelete() {
   }
 }
 
+function openReset(row: UserRow) {
+  Object.assign(resetDialog, { visible: true, row, password: '' })
+}
+
+async function confirmReset() {
+  if (resetDialog.password.length < 10) {
+    ElMessage.warning('新密码至少 10 位')
+    return
+  }
+  resetDialog.saving = true
+  try {
+    await resetUserPassword(resetDialog.row!.id, resetDialog.password)
+    ElMessage.success(`已重置 ${resetDialog.row!.nickname} 的密码，其需用新密码重新登录`)
+    resetDialog.visible = false
+  } catch {
+  } finally {
+    resetDialog.saving = false
+  }
+}
+
 function onPage(p: number) {
   query.page = p
   load()
@@ -219,6 +242,7 @@ onMounted(async () => {
         <div class="user-sub">最近登录 {{ fmtTime(u.lastLoginAt) }}</div>
         <div class="user-ops">
           <el-button text type="primary" size="small" @click="openEdit(u)">编辑</el-button>
+          <el-button text size="small" @click="openReset(u)">重置密码</el-button>
           <el-button text type="warning" size="small" @click="openRole(u)">角色</el-button>
           <el-button v-if="!u.roleCodes.includes('admin')" text type="danger" size="small" @click="openDelete(u)">
             删除
@@ -300,6 +324,20 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="roleDialog.visible = false">取消</el-button>
         <el-button type="primary" :loading="roleDialog.saving" @click="saveRole">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 重置密码 -->
+    <el-dialog v-model="resetDialog.visible" :title="`重置密码：${resetDialog.row?.nickname ?? ''}`" width="340px">
+      <el-form label-position="top" @submit.prevent="confirmReset">
+        <el-form-item label="新密码" required>
+          <el-input v-model="resetDialog.password" type="password" show-password placeholder=">=10 位" />
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon title="重置后该用户的所有登录会话将被注销，需用新密码重新登录" />
+      <template #footer>
+        <el-button @click="resetDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="resetDialog.saving" @click="confirmReset">确认重置</el-button>
       </template>
     </el-dialog>
 
